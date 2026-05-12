@@ -99,7 +99,7 @@ if uploaded_file:
     st.subheader("🤖 AI Insights")
 
     for insight in insights:
-        st.markdown(f"- {insight}")
+     st.markdown(f"- {insight}")
 
     # ── Score Breakdown ───────────────────────────────────────────────────────
     with st.expander("📊 See Score Breakdown"):
