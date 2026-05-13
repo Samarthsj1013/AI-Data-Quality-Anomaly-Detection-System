@@ -24,37 +24,12 @@ def normalize_nulls(df):
 # ─────────────────────────────────────────────
 # LOAD DATA
 # ─────────────────────────────────────────────
-# ─────────────────────────────────────────────
-# LOAD DATA
-# ─────────────────────────────────────────────
 def load_data(file):
-
-    # Excel files
     if file.name.endswith('.xlsx') or file.name.endswith('.xls'):
         df = pd.read_excel(file, dtype=str)
-
-    # CSV files
     else:
-        try:
-            df = pd.read_csv(
-                file,
-                dtype=str,
-                on_bad_lines='skip',
-                engine='python'
-            )
-
-        except Exception:
-            df = pd.read_csv(
-                file,
-                dtype=str,
-                encoding_errors='ignore',
-                on_bad_lines='skip',
-                engine='python'
-            )
-
-    # Normalize hidden nulls
+        df = pd.read_csv(file, dtype=str, on_bad_lines='skip')
     df = normalize_nulls(df)
-
     return df
 
 
