@@ -550,3 +550,106 @@ def generate_ai_insights(df, null_df, duplicate_count, outlier_df,
         insights.append("💡 Overall: Dataset is relatively clean and ready for analysis.")
 
     return insights
+
+# ─────────────────────────────────────────────
+# AI CODE GENERATOR (no API key needed)
+# ─────────────────────────────────────────────
+def generate_cleaning_code(df, null_df, duplicate_count, outlier_df, type_info):
+    lines = []
+    lines.append("import pandas as pd")
+    lines.append("import numpy as np")
+    lines.append("")
+    lines.append("# ── Load your dataset ──────────────────────────────")
+    lines.append("# df = pd.read_csv('your_file.csv')")
+    lines.append("")
+    lines.append("# ── Step 1: Normalize hidden null values ────────────")
+    lines.append("null_like = ['', ' ', 'none', 'null', 'na', 'n/a', 'nan',")
+    lines.append("             'unknown', 'missing', '-', '--', 'nil', 'N/A', 'None']")
+    lines.append("df.replace(null_like, pd.NA, inplace=True)")
+    lines.append("")
+
+    # Step 2: Duplicates
+    if duplicate_count > 0:
+        lines.append("# ── Step 2: Remove duplicates ───────────────────────")
+        lines.append(f"# Found {duplicate_count} duplicate rows")
+        lines.append("df.drop_duplicates(inplace=True)")
+        lines.append("df.reset_index(drop=True, inplace=True)")
+        lines.append("")
+    else:
+        lines.append("# ── Step 2: No duplicates found ✅ ──────────────────")
+        lines.append("")
+
+    # Step 3: Handle nulls
+    lines.append("# ── Step 3: Fix missing values ──────────────────────")
+    has_null_fixes = False
+    for _, row in null_df.iterrows():
+        col = row["Column"]
+        missing_pct = row["Missing %"]
+        if missing_pct == 0:
+            continue
+        has_null_fixes = True
+        if missing_pct > 50:
+            lines.append(f"# DROP '{col}' — {missing_pct}% missing, too much to salvage")
+            lines.append(f"df.drop(columns=['{col}'], inplace=True)")
+        elif type_info.get(col, {}).get("inferred") == "numeric":
+            series = type_info[col]["coerced_numeric"].dropna()
+            median_val = round(float(series.median()), 2)
+            lines.append(f"# FILL '{col}' nulls with median ({median_val}) — {missing_pct}% missing")
+            lines.append(f"df['{col}'] = pd.to_numeric(df['{col}'], errors='coerce')")
+            lines.append(f"df['{col}'].fillna({median_val}, inplace=True)")
+        else:
+            mode_val = df[col].mode()[0] if not df[col].mode().empty else "unknown"
+            lines.append(f"# FILL '{col}' nulls with mode ('{mode_val}') — {missing_pct}% missing")
+            lines.append(f"df['{col}'].fillna('{mode_val}', inplace=True)")
+        lines.append("")
+
+    if not has_null_fixes:
+        lines.append("# No missing values found ✅")
+        lines.append("")
+
+    # Step 4: Fix type mismatches
+    mismatches = [
+        col for col in df.columns
+        if type_info.get(col, {}).get("actual") in ["object", "str"]
+        and type_info.get(col, {}).get("inferred") == "numeric"
+    ]
+    if mismatches:
+        lines.append("# ── Step 4: Fix type mismatches ─────────────────────")
+        for col in mismatches:
+            lines.append(f"# CONVERT '{col}' — stored as text but contains numbers")
+            lines.append(f"df['{col}'] = pd.to_numeric(df['{col}'], errors='coerce')")
+            lines.append("")
+    else:
+        lines.append("# ── Step 4: No type mismatches found ✅ ─────────────")
+        lines.append("")
+
+    # Step 5: Cap outliers
+    if not outlier_df.empty and outlier_df["Outlier Count"].sum() > 0:
+        lines.append("# ── Step 5: Cap outliers using IQR bounds ───────────")
+        for _, row in outlier_df.iterrows():
+            if row["Outlier Count"] > 0:
+                col = row["Column"]
+                lower = row["IQR Lower"]
+                upper = row["IQR Upper"]
+                lines.append(f"# CAP '{col}' — {row['Outlier Count']} outliers outside [{lower}, {upper}]")
+                lines.append(f"df['{col}'] = pd.to_numeric(df['{col}'], errors='coerce')")
+                lines.append(f"df['{col}'] = df['{col}'].clip(lower={lower}, upper={upper})")
+                lines.append("")
+    else:
+        lines.append("# ── Step 5: No outliers to fix ✅ ───────────────────")
+        lines.append("")
+
+    # Step 6: Summary
+    lines.append("# ── Step 6: Final check ─────────────────────────────")
+    lines.append("print('=== Cleaning Complete ===')")
+    lines.append("print(f'Rows: {len(df)}')")
+    lines.append("print(f'Columns: {len(df.columns)}')")
+    lines.append("print(f'Remaining nulls: {df.isnull().sum().sum()}')")
+    lines.append("print(f'Duplicates: {df.duplicated().sum()}')")
+    lines.append("print('Columns:', list(df.columns))")
+    lines.append("")
+    lines.append("# ── Save cleaned file ────────────────────────────────")
+    lines.append("df.to_csv('cleaned_dataset.csv', index=False)")
+    lines.append("print('Saved to cleaned_dataset.csv ✅')")
+
+    return "\n".join(lines)

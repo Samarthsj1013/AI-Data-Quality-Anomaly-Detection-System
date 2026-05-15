@@ -314,6 +314,24 @@ if uploaded_file:
 
     st.divider()
 
+    # ── AI Code Generator ─────────────────────────────────────────────────────
+    st.subheader("🤖 AI Cleaning Code Generator")
+    st.markdown("Click below and AI will write the **exact Python code** to clean your specific dataset — ready to copy and run.")
+
+    if st.button("⚡ Generate Cleaning Code"):
+        from checker import generate_cleaning_code
+        code = generate_cleaning_code(df, null_df, duplicate_count, outlier_df, type_info)
+        st.code(code, language="python")
+        st.download_button(
+            "📥 Download Cleaning Script",
+            data=code,
+            file_name="clean_dataset.py",
+            mime="text/plain"
+        )
+        st.success("✅ Copy the code above or download it as a .py file!")
+
+    st.divider()
+
     # ── Download Report ───────────────────────────────────────────────────────
     st.subheader("📥 Download Report")
     report = null_df.copy()
