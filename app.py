@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import streamlit.components.v1 as components
-from checker import generate_ai_insights, generate_cleaning_code
+from checker import generate_ai_insights, generate_cleaning_code, generate_data_story, cross_column_validation
 from checker import (
     load_data, check_nulls, check_duplicates, check_data_types,
     detect_outliers, quality_score, generate_suggestions, auto_clean,
@@ -332,6 +332,15 @@ if uploaded_file:
     st.markdown(f"<h1 style='color:{color}'>{score} / 100 &nbsp;&nbsp; <span style='font-size:0.6em'>{label}</span></h1>",
                 unsafe_allow_html=True)
 
+    # ── Data Story ────────────────────────────────────────────────────────────
+    from checker import generate_data_story
+    story = generate_data_story(
+        df, null_df, duplicate_count, outlier_df,
+        score, type_info, industry, uploaded_file.name
+    )
+    st.subheader("📖 Data Story")
+    st.info(story)
+
     # ── AI Insights ───────────────────────────────────────────────────────────
     st.subheader("🤖 AI Insights")
     for insight in insights:
@@ -393,6 +402,21 @@ if uploaded_file:
             st.plotly_chart(fig2, use_container_width=True)
         else:
             st.info("No outliers detected in numeric columns.")
+        # ── Cross-Column Validation ───────────────────────────────────────────────
+    st.divider()
+    st.subheader("🔀 Cross-Column Validation")
+    st.markdown("Checks mathematical and logical relationships **between** columns — not just individual column issues.")
+
+    cross_df = cross_column_validation(df, type_info)
+    if not cross_df.empty:
+        st.dataframe(cross_df, use_container_width=True)
+        critical_cross = cross_df[cross_df["Severity"].str.contains("Critical")]
+        if not critical_cross.empty:
+            st.error(f"🔴 {len(critical_cross)} critical cross-column inconsistencies found — data cannot be trusted without fixing these.")
+        else:
+            st.warning("🟡 Some cross-column inconsistencies found — review before analysis.")
+    else:
+        st.success("✅ No cross-column relationships detected to validate (no quantity/price/total or date pair columns found).")
 
     # ── Validation Section ────────────────────────────────────────────────────
     st.divider()

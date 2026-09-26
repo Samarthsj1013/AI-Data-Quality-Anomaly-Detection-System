@@ -837,3 +837,224 @@ def run_industry_checks(df, type_info, industry):
         issues.append("✅ No domain-specific issues found — data looks valid for this industry!")
 
     return issues
+
+# ─────────────────────────────────────────────
+# DATA STORY GENERATOR
+# ─────────────────────────────────────────────
+def generate_data_story(df, null_df, duplicate_count, outlier_df,
+                        score, type_info, industry, uploaded_filename):
+    total_rows    = len(df)
+    total_cols    = len(df.columns)
+    numeric_cols  = [col for col in df.columns if type_info[col]["inferred"] == "numeric"]
+    text_cols     = [col for col in df.columns if type_info[col]["inferred"] == "text"]
+    total_nulls   = int(df.isnull().sum().sum())
+    avg_null_pct  = round(null_df["Missing %"].mean(), 1)
+
+    # Opening line — dataset identity
+    industry_phrases = {
+        "sales":     "sales transactions",
+        "hr":        "employee records",
+        "medical":   "patient records",
+        "transport": "transport records",
+        "finance":   "financial transactions",
+        "ecommerce": "e-commerce orders",
+        "generic":   "records"
+    }
+    record_type = industry_phrases.get(industry, "records")
+
+    # Find most interesting columns
+    worst_null_col  = null_df[null_df["Missing %"] > 0].sort_values("Missing %", ascending=False)
+    most_outlier    = outlier_df.sort_values("Outlier Count", ascending=False) if not outlier_df.empty else pd.DataFrame()
+
+    # Build story paragraph by paragraph
+    story = []
+
+    # Para 1 — What is this dataset
+    story.append(
+        f"This dataset contains {total_rows:,} {record_type} across {total_cols} fields, "
+        f"sourced from '{uploaded_filename}'. "
+        f"Of the {total_cols} columns, {len(numeric_cols)} are numeric and {len(text_cols)} are text-based."
+    )
+
+    # Para 2 — Data health verdict
+    if score >= 80:
+        verdict = f"Overall, the data is in good shape with a quality score of {score}/100 — ready for analysis with minor fixes."
+    elif score >= 50:
+        verdict = f"The data is moderately clean with a quality score of {score}/100, but requires preprocessing before analysis or ML usage."
+    else:
+        verdict = f"The data is in poor condition with a quality score of only {score}/100 — significant cleaning is required before this dataset can be trusted."
+    story.append(verdict)
+
+    # Para 3 — Missing data narrative
+    if avg_null_pct > 0:
+        if not worst_null_col.empty:
+            worst_col     = worst_null_col.iloc[0]["Column"]
+            worst_pct     = worst_null_col.iloc[0]["Missing %"]
+            missing_count = int(null_df[null_df["Missing %"] > 0].shape[0])
+            story.append(
+                f"Missing data is present across {missing_count} column(s), averaging {avg_null_pct}% per column. "
+                f"The most affected column is '{worst_col}' with {worst_pct}% of its values missing — "
+                f"{'this column likely needs to be dropped entirely' if worst_pct > 50 else 'this can likely be imputed using the column median or mode'}."
+            )
+    else:
+        story.append("Impressively, this dataset has no missing values — a rare find in real-world data.")
+
+    # Para 4 — Duplicates narrative
+    if duplicate_count > 0:
+        dup_pct = round((duplicate_count / total_rows) * 100, 1)
+        story.append(
+            f"The dataset contains {duplicate_count:,} duplicate rows ({dup_pct}% of all records), "
+            f"which may indicate data collection overlap, system merging issues, or repeated entries. "
+            f"Removing these duplicates is strongly recommended before any aggregation or counting."
+        )
+    else:
+        story.append("No duplicate rows were found — each record appears to be unique.")
+
+    # Para 5 — Outlier narrative
+    if not most_outlier.empty and most_outlier.iloc[0]["Outlier Count"] > 0:
+        top_outlier_col   = most_outlier.iloc[0]["Column"]
+        top_outlier_count = int(most_outlier.iloc[0]["Outlier Count"])
+        top_outlier_pct   = round((top_outlier_count / total_rows) * 100, 1)
+        total_outliers    = int(outlier_df["Outlier Count"].sum())
+        story.append(
+            f"Outlier analysis reveals {total_outliers:,} extreme values across numeric columns. "
+            f"The column '{top_outlier_col}' is the most affected with {top_outlier_count:,} outliers "
+            f"({top_outlier_pct}% of rows) — these could represent genuine extreme cases, "
+            f"data entry errors, or unit inconsistencies worth investigating."
+        )
+    else:
+        story.append("No significant outliers were detected in the numeric columns.")
+
+    # Para 6 — Closing recommendation
+    if score >= 80:
+        story.append(
+            f"Recommendation: This dataset is analysis-ready. "
+            f"Run a final null check and type conversion before loading into your pipeline."
+        )
+    elif score >= 50:
+        story.append(
+            f"Recommendation: Use the Auto Clean feature to fix safe issues automatically, "
+            f"then manually review flagged columns (ID, email, phone, date) before proceeding."
+        )
+    else:
+        story.append(
+            f"Recommendation: Do not use this dataset for analysis or ML without significant cleaning. "
+            f"Start with duplicate removal, handle missing values column by column, "
+            f"and validate all domain-specific fields before trusting any results."
+        )
+
+    return " \n\n".join(story)
+
+# ─────────────────────────────────────────────
+# CROSS-COLUMN VALIDATION
+# ─────────────────────────────────────────────
+def cross_column_validation(df, type_info):
+    results = []
+
+    # Pattern 1 — quantity × unit_price ≈ total_amount
+    qty_cols    = [c for c in df.columns if any(k in c.lower() for k in ['quantity', 'qty', 'units'])]
+    price_cols  = [c for c in df.columns if any(k in c.lower() for k in ['unit_price', 'price', 'rate', 'cost'])]
+    total_cols  = [c for c in df.columns if any(k in c.lower() for k in ['total', 'amount', 'revenue', 'subtotal'])]
+
+    for qty_col in qty_cols:
+        for price_col in price_cols:
+            for total_col in total_cols:
+                if qty_col == price_col or qty_col == total_col or price_col == total_col:
+                    continue
+                try:
+                    qty   = pd.to_numeric(df[qty_col], errors='coerce')
+                    price = pd.to_numeric(df[price_col], errors='coerce')
+                    total = pd.to_numeric(df[total_col], errors='coerce')
+
+                    valid = qty.notna() & price.notna() & total.notna()
+                    if valid.sum() < 10:
+                        continue
+
+                    expected  = qty[valid] * price[valid]
+                    actual    = total[valid]
+                    # Allow 1% tolerance for rounding
+                    tolerance = actual.abs() * 0.01
+                    mismatch  = ((expected - actual).abs() > tolerance).sum()
+
+                    if mismatch > 0:
+                        mismatch_pct = round((mismatch / valid.sum()) * 100, 1)
+                        results.append({
+                            "Check": f"{qty_col} × {price_col} ≈ {total_col}",
+                            "Issue": f"{mismatch:,} rows where {qty_col} × {price_col} ≠ {total_col}",
+                            "Affected Rows": mismatch,
+                            "Affected %": mismatch_pct,
+                            "Severity": "🔴 Critical" if mismatch_pct > 10 else "🟡 Warning"
+                        })
+                    else:
+                        results.append({
+                            "Check": f"{qty_col} × {price_col} ≈ {total_col}",
+                            "Issue": "✅ No mathematical inconsistencies found",
+                            "Affected Rows": 0,
+                            "Affected %": 0.0,
+                            "Severity": "✅ Passed"
+                        })
+                except Exception:
+                    continue
+
+    # Pattern 2 — start_date should be before end_date
+    date_pairs = [
+        ('signup_date', 'purchase_date'),
+        ('start_date', 'end_date'),
+        ('created_at', 'updated_at'),
+        ('order_date', 'delivery_date'),
+        ('hire_date', 'termination_date'),
+    ]
+    for col_a, col_b in date_pairs:
+        matching_a = [c for c in df.columns if col_a.replace('_', '') in c.lower().replace('_', '')]
+        matching_b = [c for c in df.columns if col_b.replace('_', '') in c.lower().replace('_', '')]
+        for ca in matching_a:
+            for cb in matching_b:
+                if ca == cb:
+                    continue
+                try:
+                    da = pd.to_datetime(df[ca], errors='coerce')
+                    db = pd.to_datetime(df[cb], errors='coerce')
+                    valid = da.notna() & db.notna()
+                    if valid.sum() < 10:
+                        continue
+                    violations = (da[valid] > db[valid]).sum()
+                    if violations > 0:
+                        viol_pct = round((violations / valid.sum()) * 100, 1)
+                        results.append({
+                            "Check": f"{ca} before {cb}",
+                            "Issue": f"{violations:,} rows where {ca} is AFTER {cb}",
+                            "Affected Rows": violations,
+                            "Affected %": viol_pct,
+                            "Severity": "🔴 Critical" if viol_pct > 5 else "🟡 Warning"
+                        })
+                except Exception:
+                    continue
+
+    # Pattern 3 — age consistency (if dob and age both exist)
+    dob_cols = [c for c in df.columns if any(k in c.lower() for k in ['dob', 'birth', 'birthdate'])]
+    age_cols = [c for c in df.columns if 'age' in c.lower()]
+    for dob_col in dob_cols:
+        for age_col in age_cols:
+            try:
+                dob = pd.to_datetime(df[dob_col], errors='coerce')
+                age = pd.to_numeric(df[age_col], errors='coerce')
+                valid = dob.notna() & age.notna()
+                if valid.sum() < 10:
+                    continue
+                calculated_age = ((pd.Timestamp.now() - dob[valid]).dt.days / 365.25).round(0)
+                mismatch = ((calculated_age - age[valid]).abs() > 2).sum()
+                if mismatch > 0:
+                    mismatch_pct = round((mismatch / valid.sum()) * 100, 1)
+                    results.append({
+                        "Check": f"{dob_col} vs {age_col}",
+                        "Issue": f"{mismatch:,} rows where age doesn't match date of birth",
+                        "Affected Rows": mismatch,
+                        "Affected %": mismatch_pct,
+                        "Severity": "🟡 Warning"
+                    })
+            except Exception:
+                continue
+
+    return pd.DataFrame(results) if results else pd.DataFrame(
+        columns=["Check", "Issue", "Affected Rows", "Affected %", "Severity"]
+    )
