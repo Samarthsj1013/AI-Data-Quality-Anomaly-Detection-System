@@ -464,14 +464,28 @@ def auto_clean(df, type_info):
 def correlation_heatmap(df, type_info):
     numeric_data = {}
     for col in df.columns:
-        if type_info[col]["inferred"] == "numeric":
-            numeric_data[col] = type_info[col]["coerced_numeric"]
+        if any(k in col.lower() for k in ['phone', 'postal', 'zip', 'pin', 'mobile']):
+            continue
+        coerced = pd.to_numeric(df[col], errors='coerce')
+        valid_count = coerced.notna().sum()
+        if len(df) > 0 and valid_count / len(df) >= 0.5:
+            if coerced.dropna().std() > 0:
+                numeric_data[col] = coerced
 
     if len(numeric_data) < 2:
-        return None
+        return None, {}
 
-    numeric_df = pd.DataFrame(numeric_data)
-    return numeric_df.corr().round(2)
+    numeric_df  = pd.DataFrame(numeric_data)
+    corr        = numeric_df.corr().round(2)
+
+    valid_pairs = {}
+    cols = list(numeric_data.keys())
+    for i in range(len(cols)):
+        for j in range(i + 1, len(cols)):
+            valid = numeric_df[[cols[i], cols[j]]].dropna()
+            valid_pairs[f"{cols[i]} vs {cols[j]}"] = len(valid)
+
+    return corr, valid_pairs
 
 
 # ─────────────────────────────────────────────

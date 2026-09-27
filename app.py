@@ -3,13 +3,13 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import streamlit.components.v1 as components
-from checker import generate_ai_insights, generate_cleaning_code, generate_data_story, cross_column_validation
 from checker import (
     load_data, check_nulls, check_duplicates, check_data_types,
     detect_outliers, quality_score, generate_suggestions, auto_clean,
     correlation_heatmap, distribution_plots, infer_column_types,
     validate_emails, validate_dates, validate_phones, check_consistency,
-    detect_industry, run_industry_checks
+    detect_industry, run_industry_checks, generate_ai_insights,
+    generate_cleaning_code, generate_data_story, cross_column_validation
 )
 
 st.set_page_config(page_title="Data Quality Checker", page_icon="✅", layout="wide")
@@ -17,26 +17,14 @@ st.set_page_config(page_title="Data Quality Checker", page_icon="✅", layout="w
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.image("https://img.icons8.com/emoji/96/check-mark-button-emoji.png", width=60)
-    st.title("Navigation")
+    st.title("AI Data Quality")
     st.markdown("---")
-    st.markdown("### 📌 Sections")
-    st.markdown("- 📊 Data Health Report")
-    st.markdown("- 🏥 Column Health Cards")
-    st.markdown("- 🔬 Industry Detector")
-    st.markdown("- 📋 Dataset Summary")
-    st.markdown("- 🏆 Quality Score")
-    st.markdown("- 🤖 AI Insights")
-    st.markdown("- 💡 Fix Suggestions")
-    st.markdown("- 🔴 Missing Values")
-    st.markdown("- 🟡 Duplicates & Types")
-    st.markdown("- 🟠 Outliers")
-    st.markdown("- 📧 Email / Date / Phone")
-    st.markdown("- ⚠️ Consistency Check")
-    st.markdown("- 🔗 Correlation Heatmap")
-    st.markdown("- 📊 Distribution Plots")
-    st.markdown("- 🔵 Scatter Plot")
-    st.markdown("- 🧹 Auto Clean")
-    st.markdown("- 🤖 AI Code Generator")
+    st.markdown("### 📌 Tabs")
+    st.markdown("- 📊 **Overview** — Health report, story, industry")
+    st.markdown("- 🔍 **Analysis** — Nulls, duplicates, outliers, types")
+    st.markdown("- ✅ **Validation** — Email, phone, date, consistency")
+    st.markdown("- 📈 **Visuals** — Heatmap, distribution, scatter")
+    st.markdown("- 🧹 **Actions** — Clean, code generator, download")
     st.markdown("---")
     st.markdown("### ℹ️ About")
     st.markdown("Upload any CSV or Excel file to instantly analyze data quality.")
@@ -44,8 +32,8 @@ with st.sidebar:
     st.caption("Built with Python + Streamlit")
 
 # ── Title ─────────────────────────────────────────────────────────────────────
-st.title("✅ Data Quality Checker")
-st.markdown("Upload any CSV or Excel file and get a **full quality report** instantly — including email, date, phone, outlier, and consistency checks.")
+st.title("✅ AI Data Quality & Anomaly Detection")
+st.markdown("Upload any CSV or Excel file — get a **full quality report** instantly.")
 
 uploaded_file = st.file_uploader("Upload your CSV or Excel file", type=["csv", "xlsx", "xls"])
 
@@ -62,6 +50,9 @@ if uploaded_file:
     date_df         = validate_dates(df, type_info)
     phone_df        = validate_phones(df)
     consistency_df  = check_consistency(df)
+    cross_df        = cross_column_validation(df, type_info)
+    industry, confidence = detect_industry(df)
+    industry_issues = run_industry_checks(df, type_info, industry)
     score           = quality_score(
                         df, null_df, duplicate_count, outlier_df,
                         email_df, date_df, phone_df, consistency_df, type_info
@@ -74,15 +65,30 @@ if uploaded_file:
                         df, null_df, duplicate_count, outlier_df,
                         email_df, date_df, phone_df, consistency_df, type_info
                       )
+    story           = generate_data_story(
+                        df, null_df, duplicate_count, outlier_df,
+                        score, type_info, industry, uploaded_file.name
+                      )
 
-    # ── Story Dashboard ───────────────────────────────────────────────────────
+    # ── Score color ───────────────────────────────────────────────────────────
+    if score >= 80:
+        score_color = "#00c853"
+        score_label = "🟢 Good"
+    elif score >= 50:
+        score_color = "#ffa000"
+        score_label = "🟡 Needs Cleaning"
+    else:
+        score_color = "#d50000"
+        score_label = "🔴 Poor Quality"
+
+    # ── Issue counts for health report ────────────────────────────────────────
     critical = []
     warnings = []
     passed   = []
 
     for _, row in null_df.iterrows():
         if row["Missing %"] > 50:
-            critical.append(f"🔴 '{row['Column']}' — {row['Missing %']}% missing (critical)")
+            critical.append(f"🔴 '{row['Column']}' — {row['Missing %']}% missing")
         elif row["Missing %"] > 0:
             warnings.append(f"🟡 '{row['Column']}' — {row['Missing %']}% missing")
         else:
@@ -116,491 +122,566 @@ if uploaded_file:
     bar_empty    = 20 - bar_filled
     progress_bar = "█" * bar_filled + "░" * bar_empty
 
-    if score >= 80:
-        score_color = "#00c853"
-        score_label = "🟢 Good"
-    elif score >= 50:
-        score_color = "#ffa000"
-        score_label = "🟡 Needs Cleaning"
-    else:
-        score_color = "#d50000"
-        score_label = "🔴 Poor Quality"
+    # ══════════════════════════════════════════════════════════════════════════
+    # TABS
+    # ══════════════════════════════════════════════════════════════════════════
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📊 Overview",
+        "🔍 Analysis",
+        "✅ Validation",
+        "📈 Visuals",
+        "🧹 Actions"
+    ])
 
-    # ── Data Health Report card ───────────────────────────────────────────────
-    components.html(f"""
-    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-                background:linear-gradient(135deg,#1e1e2e,#2a2a3e);
-                border-radius:16px;padding:28px;margin-bottom:8px;
-                border:1px solid #3a3a5c;">
-        <h2 style="margin:0 0 4px 0;color:#fff;font-size:1.1em;
-                   text-transform:uppercase;letter-spacing:2px;">
-            📊 Data Health Report
-        </h2>
-        <p style="color:#888;margin:0 0 20px 0;font-size:0.85em;">
-            Generated for: <b style="color:#aaa">{uploaded_file.name}</b>
-            &nbsp;|&nbsp; {df.shape[0]} rows x {df.shape[1]} columns
-        </p>
-        <div style="display:flex;gap:40px;margin-bottom:24px;flex-wrap:wrap;">
-            <div>
-                <div style="font-size:3em;font-weight:900;color:{score_color};line-height:1;">
-                    {score}
-                </div>
-                <div style="font-size:0.85em;color:#888;margin-top:4px;">
-                    Quality Score &nbsp; {score_label}
-                </div>
-            </div>
-            <div style="flex:1;min-width:200px;">
-                <div style="color:#aaa;font-size:0.8em;margin-bottom:8px;">DATA READINESS</div>
-                <div style="font-family:monospace;font-size:1.1em;
-                            color:{score_color};letter-spacing:2px;">
-                    {progress_bar}
-                </div>
-                <div style="color:#888;font-size:0.78em;margin-top:6px;">
-                    {readiness}% ready for analysis
-                </div>
-            </div>
-        </div>
-        <div style="display:flex;gap:16px;flex-wrap:wrap;">
-            <div style="background:#ff000022;border:1px solid #ff444466;
-                        border-radius:10px;padding:12px 20px;min-width:120px;">
-                <div style="font-size:1.8em;font-weight:800;color:#ff4444;">{len(critical)}</div>
-                <div style="color:#ff8888;font-size:0.8em;">Critical Issues</div>
-            </div>
-            <div style="background:#ffa00022;border:1px solid #ffa00066;
-                        border-radius:10px;padding:12px 20px;min-width:120px;">
-                <div style="font-size:1.8em;font-weight:800;color:#ffa000;">{len(warnings)}</div>
-                <div style="color:#ffcc88;font-size:0.8em;">Warnings</div>
-            </div>
-            <div style="background:#00c85322;border:1px solid #00c85366;
-                        border-radius:10px;padding:12px 20px;min-width:120px;">
-                <div style="font-size:1.8em;font-weight:800;color:#00c853;">{len(passed)}</div>
-                <div style="color:#88ffaa;font-size:0.8em;">Columns Passed</div>
-            </div>
-            <div style="background:#2979ff22;border:1px solid #2979ff66;
-                        border-radius:10px;padding:12px 20px;min-width:120px;">
-                <div style="font-size:1.8em;font-weight:800;color:#2979ff;">{total_issues}</div>
-                <div style="color:#88aaff;font-size:0.8em;">Total Issues</div>
-            </div>
-        </div>
-    </div>
-    """, height=280)
+    # ══════════════════════════════════════════════════════════════════════════
+    # TAB 1 — OVERVIEW
+    # ══════════════════════════════════════════════════════════════════════════
+    with tab1:
 
-    if critical or warnings:
-        with st.expander("🔍 View All Issues", expanded=False):
-            if critical:
-                st.markdown("**🔴 Critical Issues:**")
-                for c in critical:
-                    st.markdown(f"&nbsp;&nbsp;{c}")
-            if warnings:
-                st.markdown("**🟡 Warnings:**")
-                for w in warnings:
-                    st.markdown(f"&nbsp;&nbsp;{w}")
-
-    # ── Column Health Cards ───────────────────────────────────────────────────
-    st.markdown("### 🏥 Column Health Cards")
-    col_names    = list(df.columns)
-    cols_per_row = 4
-
-    for i in range(0, len(col_names), cols_per_row):
-        row_cols = st.columns(cols_per_row)
-        for j, col_name in enumerate(col_names[i:i + cols_per_row]):
-            with row_cols[j]:
-                null_row    = null_df[null_df["Column"] == col_name]
-                missing_pct = float(null_row["Missing %"].values[0]) if not null_row.empty else 0.0
-                col_type    = type_info[col_name]["inferred"]
-
-                outlier_count = 0
-                if not outlier_df.empty and col_name in outlier_df["Column"].values:
-                    outlier_count = int(
-                        outlier_df[outlier_df["Column"] == col_name]["Outlier Count"].values[0]
-                    )
-
-                if missing_pct > 50 or (len(df) > 0 and outlier_count / len(df) * 100 > 15):
-                    card_color   = "#ff000033"
-                    border_color = "#ff4444"
-                    status       = "🔴 Critical"
-                elif missing_pct > 5 or outlier_count > 0:
-                    card_color   = "#ffa00022"
-                    border_color = "#ffa000"
-                    status       = "🟡 Warning"
-                else:
-                    card_color   = "#00c85322"
-                    border_color = "#00c853"
-                    status       = "✅ Healthy"
-
-                fill         = max(0, min(10, int((100 - missing_pct) / 10)))
-                fill_bar     = "█" * fill + "░" * (10 - fill)
-                outlier_text = f" | {outlier_count} outliers" if outlier_count > 0 else ""
-
-                components.html(f"""
-                <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-                            background:{card_color};border:1px solid {border_color};
-                            border-radius:10px;padding:12px;margin-bottom:4px;">
-                    <div style="font-weight:700;font-size:0.9em;color:#fff;margin-bottom:4px;
-                                white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"
-                         title="{col_name}">{col_name}</div>
-                    <div style="font-size:0.72em;color:#aaa;margin-bottom:6px;">
-                        {col_type} &nbsp;|&nbsp; {status}
+        # Data Health Report
+        components.html(f"""
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+                    background:linear-gradient(135deg,#1e1e2e,#2a2a3e);
+                    border-radius:16px;padding:28px;margin-bottom:8px;
+                    border:1px solid #3a3a5c;">
+            <h2 style="margin:0 0 4px 0;color:#fff;font-size:1.1em;
+                       text-transform:uppercase;letter-spacing:2px;">
+                📊 Data Health Report
+            </h2>
+            <p style="color:#888;margin:0 0 20px 0;font-size:0.85em;">
+                Generated for: <b style="color:#aaa">{uploaded_file.name}</b>
+                &nbsp;|&nbsp; {df.shape[0]:,} rows x {df.shape[1]} columns
+            </p>
+            <div style="display:flex;gap:40px;margin-bottom:24px;flex-wrap:wrap;">
+                <div>
+                    <div style="font-size:3em;font-weight:900;color:{score_color};line-height:1;">
+                        {score}
                     </div>
-                    <div style="font-family:monospace;font-size:0.8em;color:{border_color};">
-                        {fill_bar}
-                    </div>
-                    <div style="font-size:0.7em;color:#888;margin-top:4px;">
-                        {round(100 - missing_pct, 1)}% complete{outlier_text}
+                    <div style="font-size:0.85em;color:#888;margin-top:4px;">
+                        Quality Score &nbsp; {score_label}
                     </div>
                 </div>
-                """, height=110)
-
-    st.divider()
-
-    # ── Industry Detector ─────────────────────────────────────────────────────
-    industry, confidence = detect_industry(df)
-
-    industry_meta = {
-        "sales":     ("🛒", "Sales Dataset",      "#00bcd4"),
-        "hr":        ("👥", "HR Dataset",          "#9c27b0"),
-        "medical":   ("🏥", "Medical Dataset",     "#f44336"),
-        "transport": ("🚢", "Transport Dataset",   "#ff9800"),
-        "finance":   ("💰", "Finance Dataset",     "#4caf50"),
-        "ecommerce": ("🛍️",  "E-Commerce Dataset", "#e91e63"),
-        "generic":   ("📊", "Generic Dataset",     "#607d8b"),
-    }
-
-    icon, ind_label, ind_color = industry_meta.get(industry, ("📊", "Generic Dataset", "#607d8b"))
-    industry_issues = run_industry_checks(df, type_info, industry)
-    issue_count     = len([x for x in industry_issues if x.startswith("⚠️")])
-    issues_html     = "".join(
-        f'<div style="font-size:0.82em;color:#ccc;padding:3px 0;">{iss}</div>'
-        for iss in industry_issues
-    )
-
-    components.html(f"""
-    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-                background:linear-gradient(135deg,#0d1117,#1a1f2e);
-                border-left:5px solid {ind_color};
-                border-radius:12px;padding:20px 24px;margin-bottom:8px;">
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
-            <span style="font-size:2em;">{icon}</span>
-            <div>
-                <div style="font-size:1.15em;font-weight:800;color:#fff;">
-                    {ind_label} Detected
-                </div>
-                <div style="font-size:0.78em;color:#888;">
-                    Confidence: {confidence} keyword{"s" if confidence != 1 else ""} matched
-                    &nbsp;|&nbsp; Running domain-specific checks...
+                <div style="flex:1;min-width:200px;">
+                    <div style="color:#aaa;font-size:0.8em;margin-bottom:8px;">DATA READINESS</div>
+                    <div style="font-family:monospace;font-size:1.1em;
+                                color:{score_color};letter-spacing:2px;">
+                        {progress_bar}
+                    </div>
+                    <div style="color:#888;font-size:0.78em;margin-top:6px;">
+                        {readiness}% ready for analysis
+                    </div>
                 </div>
             </div>
-            <div style="margin-left:auto;background:{ind_color}22;
-                        border:1px solid {ind_color}88;
-                        border-radius:8px;padding:8px 16px;text-align:center;">
-                <div style="font-size:1.4em;font-weight:800;color:{ind_color};">{issue_count}</div>
-                <div style="font-size:0.7em;color:#aaa;">Domain Issues</div>
+            <div style="display:flex;gap:16px;flex-wrap:wrap;">
+                <div style="background:#ff000022;border:1px solid #ff444466;
+                            border-radius:10px;padding:12px 20px;min-width:120px;">
+                    <div style="font-size:1.8em;font-weight:800;color:#ff4444;">{len(critical)}</div>
+                    <div style="color:#ff8888;font-size:0.8em;">Critical Issues</div>
+                </div>
+                <div style="background:#ffa00022;border:1px solid #ffa00066;
+                            border-radius:10px;padding:12px 20px;min-width:120px;">
+                    <div style="font-size:1.8em;font-weight:800;color:#ffa000;">{len(warnings)}</div>
+                    <div style="color:#ffcc88;font-size:0.8em;">Warnings</div>
+                </div>
+                <div style="background:#00c85322;border:1px solid #00c85366;
+                            border-radius:10px;padding:12px 20px;min-width:120px;">
+                    <div style="font-size:1.8em;font-weight:800;color:#00c853;">{len(passed)}</div>
+                    <div style="color:#88ffaa;font-size:0.8em;">Columns Passed</div>
+                </div>
+                <div style="background:#2979ff22;border:1px solid #2979ff66;
+                            border-radius:10px;padding:12px 20px;min-width:120px;">
+                    <div style="font-size:1.8em;font-weight:800;color:#2979ff;">{total_issues}</div>
+                    <div style="color:#88aaff;font-size:0.8em;">Total Issues</div>
+                </div>
             </div>
         </div>
-        <div style="border-top:1px solid #ffffff11;padding-top:12px;">
-            {issues_html}
+        """, height=280)
+
+        if critical or warnings:
+            with st.expander("🔍 View All Issues", expanded=False):
+                if critical:
+                    st.markdown("**🔴 Critical Issues:**")
+                    for c in critical:
+                        st.markdown(f"&nbsp;&nbsp;{c}")
+                if warnings:
+                    st.markdown("**🟡 Warnings:**")
+                    for w in warnings:
+                        st.markdown(f"&nbsp;&nbsp;{w}")
+
+        # Summary metrics
+        st.divider()
+        s1, s2, s3, s4, s5 = st.columns(5)
+        with s1:
+            st.metric("📦 Total Rows", f"{df.shape[0]:,}")
+        with s2:
+            st.metric("📊 Total Columns", df.shape[1])
+        with s3:
+            st.metric("🔴 Total Nulls", f"{int(df.isnull().sum().sum()):,}")
+        with s4:
+            st.metric("🟡 Duplicates", f"{duplicate_count:,}")
+        with s5:
+            numeric_count = sum(1 for col in df.columns if type_info[col]["inferred"] == "numeric")
+            st.metric("🔢 Numeric Cols", numeric_count)
+
+        # Dataset preview
+        st.subheader("📄 Dataset Preview")
+        st.dataframe(df.head(10))
+
+        st.divider()
+
+        # Data Story
+        st.subheader("📖 Data Story")
+        st.info(story)
+
+        # AI Insights
+        st.subheader("🤖 AI Insights")
+        for insight in insights:
+            st.markdown(f"- {insight}")
+
+        st.divider()
+
+        # Column Health Cards
+        st.subheader("🏥 Column Health Cards")
+        col_names    = list(df.columns)
+        cols_per_row = 4
+
+        for i in range(0, len(col_names), cols_per_row):
+            row_cols = st.columns(cols_per_row)
+            for j, col_name in enumerate(col_names[i:i + cols_per_row]):
+                with row_cols[j]:
+                    null_row    = null_df[null_df["Column"] == col_name]
+                    missing_pct = float(null_row["Missing %"].values[0]) if not null_row.empty else 0.0
+                    col_type    = type_info[col_name]["inferred"]
+
+                    outlier_count = 0
+                    if not outlier_df.empty and col_name in outlier_df["Column"].values:
+                        outlier_count = int(
+                            outlier_df[outlier_df["Column"] == col_name]["Outlier Count"].values[0]
+                        )
+
+                    if missing_pct > 50 or (len(df) > 0 and outlier_count / len(df) * 100 > 15):
+                        card_color   = "#ff000033"
+                        border_color = "#ff4444"
+                        status       = "🔴 Critical"
+                    elif missing_pct > 5 or outlier_count > 0:
+                        card_color   = "#ffa00022"
+                        border_color = "#ffa000"
+                        status       = "🟡 Warning"
+                    else:
+                        card_color   = "#00c85322"
+                        border_color = "#00c853"
+                        status       = "✅ Healthy"
+
+                    fill         = max(0, min(10, int((100 - missing_pct) / 10)))
+                    fill_bar     = "█" * fill + "░" * (10 - fill)
+                    outlier_text = f" | {outlier_count} outliers" if outlier_count > 0 else ""
+
+                    components.html(f"""
+                    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+                                background:{card_color};border:1px solid {border_color};
+                                border-radius:10px;padding:12px;margin-bottom:4px;">
+                        <div style="font-weight:700;font-size:0.9em;color:#fff;margin-bottom:4px;
+                                    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"
+                             title="{col_name}">{col_name}</div>
+                        <div style="font-size:0.72em;color:#aaa;margin-bottom:6px;">
+                            {col_type} &nbsp;|&nbsp; {status}
+                        </div>
+                        <div style="font-family:monospace;font-size:0.8em;color:{border_color};">
+                            {fill_bar}
+                        </div>
+                        <div style="font-size:0.7em;color:#888;margin-top:4px;">
+                            {round(100 - missing_pct, 1)}% complete{outlier_text}
+                        </div>
+                    </div>
+                    """, height=110)
+
+        st.divider()
+
+        # Industry Detector
+        industry_meta = {
+            "sales":     ("🛒", "Sales Dataset",      "#00bcd4"),
+            "hr":        ("👥", "HR Dataset",          "#9c27b0"),
+            "medical":   ("🏥", "Medical Dataset",     "#f44336"),
+            "transport": ("🚢", "Transport Dataset",   "#ff9800"),
+            "finance":   ("💰", "Finance Dataset",     "#4caf50"),
+            "ecommerce": ("🛍️",  "E-Commerce Dataset", "#e91e63"),
+            "generic":   ("📊", "Generic Dataset",     "#607d8b"),
+        }
+
+        icon, ind_label, ind_color = industry_meta.get(industry, ("📊", "Generic Dataset", "#607d8b"))
+        issue_count = len([x for x in industry_issues if x.startswith("⚠️")])
+        issues_html = "".join(
+            f'<div style="font-size:0.82em;color:#ccc;padding:3px 0;">{iss}</div>'
+            for iss in industry_issues
+        )
+
+        components.html(f"""
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+                    background:linear-gradient(135deg,#0d1117,#1a1f2e);
+                    border-left:5px solid {ind_color};
+                    border-radius:12px;padding:20px 24px;margin-bottom:8px;">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+                <span style="font-size:2em;">{icon}</span>
+                <div>
+                    <div style="font-size:1.15em;font-weight:800;color:#fff;">
+                        {ind_label} Detected
+                    </div>
+                    <div style="font-size:0.78em;color:#888;">
+                        Confidence: {confidence} keyword{"s" if confidence != 1 else ""} matched
+                        &nbsp;|&nbsp; Running domain-specific checks...
+                    </div>
+                </div>
+                <div style="margin-left:auto;background:{ind_color}22;
+                            border:1px solid {ind_color}88;
+                            border-radius:8px;padding:8px 16px;text-align:center;">
+                    <div style="font-size:1.4em;font-weight:800;color:{ind_color};">{issue_count}</div>
+                    <div style="font-size:0.7em;color:#aaa;">Domain Issues</div>
+                </div>
+            </div>
+            <div style="border-top:1px solid #ffffff11;padding-top:12px;">
+                {issues_html}
+            </div>
         </div>
-    </div>
-    """, height=max(160, 120 + len(industry_issues) * 28))
+        """, height=max(160, 120 + len(industry_issues) * 28))
 
-    st.divider()
+    # ══════════════════════════════════════════════════════════════════════════
+    # TAB 2 — ANALYSIS
+    # ══════════════════════════════════════════════════════════════════════════
+    with tab2:
 
-    # ── Summary Card ─────────────────────────────────────────────────────────
-    st.subheader("📋 Dataset Summary")
-    s1, s2, s3, s4, s5 = st.columns(5)
-    with s1:
-        st.metric("📦 Total Rows", df.shape[0])
-    with s2:
-        st.metric("📊 Total Columns", df.shape[1])
-    with s3:
-        total_nulls = int(df.isnull().sum().sum())
-        st.metric("🔴 Total Nulls", total_nulls)
-    with s4:
-        st.metric("🟡 Duplicates", duplicate_count)
-    with s5:
-        numeric_count = sum(1 for col in df.columns if type_info[col]["inferred"] == "numeric")
-        st.metric("🔢 Numeric Cols", numeric_count)
+        # Score breakdown
+        st.subheader("🏆 Quality Score")
+        color = "green" if score >= 80 else "orange" if score >= 50 else "red"
+        st.markdown(f"<h1 style='color:{color}'>{score} / 100 &nbsp;&nbsp; <span style='font-size:0.6em'>{score_label}</span></h1>",
+                    unsafe_allow_html=True)
 
-    st.subheader("📄 Dataset Preview")
-    st.dataframe(df.head(10))
-    st.markdown(f"**Shape:** {df.shape[0]} rows × {df.shape[1]} columns")
+        with st.expander("📊 See Score Breakdown"):
+            b1, b2, b3, b4 = st.columns(4)
+            with b1:
+                avg_null     = null_df["Missing %"].mean()
+                null_penalty = min(avg_null * 0.75, 30)
+                st.metric("Null Penalty", f"-{round(null_penalty, 1)}")
+            with b2:
+                dup_penalty = min((duplicate_count / len(df)) * 200, 20)
+                st.metric("Duplicate Penalty", f"-{round(dup_penalty, 1)}")
+            with b3:
+                out_penalty = min((outlier_df["Outlier Count"].sum() / len(df)) * 100, 15) if not outlier_df.empty else 0
+                st.metric("Outlier Penalty", f"-{round(out_penalty, 1)}")
+            with b4:
+                mismatch = sum(1 for col in df.columns
+                               if type_info[col]["actual"] in ["object", "str"]
+                               and type_info[col]["inferred"] == "numeric")
+                st.metric("Type Mismatch Penalty", f"-{min(mismatch * 2, 10)}")
 
-    # ── Quality Score ─────────────────────────────────────────────────────────
-    st.subheader("🏆 Overall Quality Score")
-    color = "green" if score >= 80 else "orange" if score >= 50 else "red"
-    label = "🟢 Good" if score >= 80 else "🟡 Needs Cleaning" if score >= 50 else "🔴 Poor"
-    st.markdown(f"<h1 style='color:{color}'>{score} / 100 &nbsp;&nbsp; <span style='font-size:0.6em'>{label}</span></h1>",
-                unsafe_allow_html=True)
+        st.divider()
 
-    # ── Data Story ────────────────────────────────────────────────────────────
-    from checker import generate_data_story
-    story = generate_data_story(
-        df, null_df, duplicate_count, outlier_df,
-        score, type_info, industry, uploaded_file.name
-    )
-    st.subheader("📖 Data Story")
-    st.info(story)
+        # 3-column analysis
+        col1, col2, col3 = st.columns(3)
 
-    # ── AI Insights ───────────────────────────────────────────────────────────
-    st.subheader("🤖 AI Insights")
-    for insight in insights:
-        st.markdown(f"- {insight}")
+        with col1:
+            st.subheader("🔴 Missing Values")
+            st.dataframe(null_df)
+            fig = px.bar(null_df, x="Column", y="Missing %",
+                         title="Missing % per Column", color="Missing %",
+                         color_continuous_scale="Reds")
+            st.plotly_chart(fig, use_container_width=True)
 
-    # ── Score Breakdown ───────────────────────────────────────────────────────
-    with st.expander("📊 See Score Breakdown"):
-        b1, b2, b3, b4 = st.columns(4)
-        with b1:
-            avg_null     = null_df["Missing %"].mean()
-            null_penalty = min(avg_null * 0.75, 30)
-            st.metric("Null Penalty", f"-{round(null_penalty, 1)}")
-        with b2:
-            dup_penalty = min((duplicate_count / len(df)) * 200, 20)
-            st.metric("Duplicate Penalty", f"-{round(dup_penalty, 1)}")
-        with b3:
-            out_penalty = min((outlier_df["Outlier Count"].sum() / len(df)) * 100, 15) if not outlier_df.empty else 0
-            st.metric("Outlier Penalty", f"-{round(out_penalty, 1)}")
-        with b4:
-            mismatch = sum(1 for col in df.columns
-                           if type_info[col]["actual"] in ["object", "str"]
-                           and type_info[col]["inferred"] == "numeric")
-            st.metric("Type Mismatch Penalty", f"-{min(mismatch * 2, 10)}")
+        with col2:
+            st.subheader("🟡 Duplicate Rows")
+            st.metric("Total Duplicates", f"{duplicate_count:,}")
+            dup_percent = round((duplicate_count / len(df)) * 100, 2)
+            st.metric("Duplicate %", f"{dup_percent}%")
+            st.divider()
+            st.subheader("🔵 Data Types")
+            st.dataframe(dtype_df)
 
-    # ── Suggestions ───────────────────────────────────────────────────────────
-    st.subheader("💡 Auto Fix Suggestions")
-    st.dataframe(suggestions_df, use_container_width=True)
+        with col3:
+            st.subheader("🟠 Outliers Detected")
+            if not outlier_df.empty and outlier_df["Outlier Count"].sum() > 0:
+                display_outlier = outlier_df[["Column", "Outlier Count", "IQR Lower", "IQR Upper"]]
+                st.dataframe(display_outlier)
+                fig2 = px.bar(outlier_df, x="Column", y="Outlier Count",
+                              title="Outliers per Column",
+                              color="Outlier Count",
+                              color_continuous_scale="Oranges")
+                st.plotly_chart(fig2, use_container_width=True)
+            else:
+                st.info("No outliers detected in numeric columns.")
 
-    st.divider()
+        st.divider()
 
-    # ── Main 3-column analysis ────────────────────────────────────────────────
-    col1, col2, col3 = st.columns(3)
+        # Fix Suggestions
+        st.subheader("💡 Auto Fix Suggestions")
+        st.info("💡 Check the **Safe to Auto-Fix** column — some columns should NOT be auto-filled.")
+        st.dataframe(suggestions_df, use_container_width=True)
 
-    with col1:
-        st.subheader("🔴 Missing Values")
-        st.dataframe(null_df)
-        fig = px.bar(null_df, x="Column", y="Missing %",
-                     title="Missing % per Column", color="Missing %",
-                     color_continuous_scale="Reds")
-        st.plotly_chart(fig, use_container_width=True)
+    # ══════════════════════════════════════════════════════════════════════════
+    # TAB 3 — VALIDATION
+    # ══════════════════════════════════════════════════════════════════════════
+    with tab3:
 
-    with col2:
-        st.subheader("🟡 Duplicate Rows")
-        st.metric("Total Duplicates (normalized)", duplicate_count)
-        dup_percent = round((duplicate_count / len(df)) * 100, 2)
-        st.metric("Duplicate %", f"{dup_percent}%")
-        st.subheader("🔵 Data Types")
-        st.dataframe(dtype_df)
+        # Cross-Column Validation
+        st.subheader("🔀 Cross-Column Validation")
+        st.markdown("Checks mathematical and logical relationships **between** columns.")
 
-    with col3:
-        st.subheader("🟠 Outliers Detected")
-        if not outlier_df.empty and outlier_df["Outlier Count"].sum() > 0:
-            display_outlier = outlier_df[["Column", "Outlier Count", "IQR Lower", "IQR Upper"]]
-            st.dataframe(display_outlier)
-            fig2 = px.bar(outlier_df, x="Column", y="Outlier Count",
-                          title="Outliers per Column",
-                          color="Outlier Count",
-                          color_continuous_scale="Oranges")
-            st.plotly_chart(fig2, use_container_width=True)
+        if not cross_df.empty:
+            st.dataframe(cross_df, use_container_width=True)
+            critical_cross = cross_df[cross_df["Severity"].str.contains("Critical")]
+            if not critical_cross.empty:
+                st.error(f"🔴 {len(critical_cross)} critical cross-column inconsistencies found.")
+            else:
+                st.warning("🟡 Some cross-column inconsistencies found — review before analysis.")
         else:
-            st.info("No outliers detected in numeric columns.")
-        # ── Cross-Column Validation ───────────────────────────────────────────────
-    st.divider()
-    st.subheader("🔀 Cross-Column Validation")
-    st.markdown("Checks mathematical and logical relationships **between** columns — not just individual column issues.")
+            st.success("✅ No cross-column relationships found to validate.")
 
-    cross_df = cross_column_validation(df, type_info)
-    if not cross_df.empty:
-        st.dataframe(cross_df, use_container_width=True)
-        critical_cross = cross_df[cross_df["Severity"].str.contains("Critical")]
-        if not critical_cross.empty:
-            st.error(f"🔴 {len(critical_cross)} critical cross-column inconsistencies found — data cannot be trusted without fixing these.")
+        st.divider()
+
+        # Validation suite
+        st.subheader("🔍 Data Validation")
+        v1, v2, v3, v4 = st.columns(4)
+
+        with v1:
+            st.markdown("**📧 Email Validation**")
+            if not email_df.empty:
+                st.dataframe(email_df, use_container_width=True)
+            else:
+                st.success("No email columns / all valid.")
+
+        with v2:
+            st.markdown("**📅 Date Validation**")
+            if not date_df.empty:
+                st.dataframe(date_df, use_container_width=True)
+            else:
+                st.success("No date columns / all valid.")
+
+        with v3:
+            st.markdown("**📱 Phone Validation**")
+            if not phone_df.empty:
+                st.dataframe(phone_df, use_container_width=True)
+            else:
+                st.success("No phone columns / all valid.")
+
+        with v4:
+            st.markdown("**⚠️ Consistency Check**")
+            if not consistency_df.empty:
+                st.dataframe(consistency_df, use_container_width=True)
+            else:
+                st.success("No consistency issues found.")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # TAB 4 — VISUALS
+    # ══════════════════════════════════════════════════════════════════════════
+    with tab4:
+
+        # Correlation Heatmap
+        st.subheader("🔗 Correlation Heatmap")
+        st.markdown("Relationships between numeric columns. Values close to **1 or -1** = strong relationship.")
+
+        corr, valid_pairs = correlation_heatmap(df, type_info)
+        if corr is not None:
+            fig3 = px.imshow(corr, text_auto=True, color_continuous_scale="RdBu_r",
+                             zmin=-1, zmax=1, title="Correlation Matrix")
+            fig3.update_layout(width=700, height=500)
+            st.plotly_chart(fig3, use_container_width=True)
+
+            strong = []
+            cols   = corr.columns
+            for i in range(len(cols)):
+                for j in range(i + 1, len(cols)):
+                    val = corr.iloc[i, j]
+                    if abs(val) >= 0.5:
+                        direction = "positive 📈" if val > 0 else "negative 📉"
+                        strong.append(f"**{cols[i]}** and **{cols[j]}** → {val} ({direction})")
+            if strong:
+                st.markdown("**🔍 Strong Correlations Found:**")
+                for s in strong:
+                    st.markdown(f"- {s}")
+            else:
+                st.markdown("No strong correlations found.")
+
+            if valid_pairs:
+                with st.expander("📊 Valid data pairs used"):
+                    for pair, count in list(valid_pairs.items())[:10]:
+                        pct = round(count / len(df) * 100, 1)
+                        st.markdown(f"- **{pair}**: {count:,} valid rows ({pct}%)")
         else:
-            st.warning("🟡 Some cross-column inconsistencies found — review before analysis.")
-    else:
-        st.success("✅ No cross-column relationships detected to validate (no quantity/price/total or date pair columns found).")
+            st.info("Need at least 2 numeric columns for correlation heatmap.")
 
-    # ── Validation Section ────────────────────────────────────────────────────
-    st.divider()
-    st.subheader("🔍 Data Validation")
-    v1, v2, v3, v4 = st.columns(4)
+        st.divider()
 
-    with v1:
-        st.markdown("**📧 Email Validation**")
-        if not email_df.empty:
-            st.dataframe(email_df, use_container_width=True)
+        # Distribution Plots
+        st.subheader("📊 Column Distribution Plots")
+        numeric_cols = distribution_plots(df, type_info)
+        if numeric_cols:
+            selected_col = st.selectbox("Select a column to explore:", numeric_cols)
+            plot_series  = type_info[selected_col]["coerced_numeric"]
+            fig4 = px.histogram(x=plot_series, nbins=30,
+                                title=f"Distribution of {selected_col}",
+                                color_discrete_sequence=["#636EFA"],
+                                marginal="box",
+                                labels={"x": selected_col})
+            fig4.update_layout(bargap=0.1)
+            st.plotly_chart(fig4, use_container_width=True)
+
+            col_x, col_y, col_z, col_w = st.columns(4)
+            with col_x:
+                st.metric("Mean", round(float(plot_series.mean()), 2))
+            with col_y:
+                st.metric("Median", round(float(plot_series.median()), 2))
+            with col_z:
+                st.metric("Std Dev", round(float(plot_series.std()), 2))
+            with col_w:
+                st.metric("Skewness", round(float(plot_series.skew()), 2))
         else:
-            st.success("No email columns found / all valid.")
+            st.info("No numeric columns detected.")
 
-    with v2:
-        st.markdown("**📅 Date Validation**")
-        if not date_df.empty:
-            st.dataframe(date_df, use_container_width=True)
+        st.divider()
+
+        # Scatter Plot
+        st.subheader("🔵 Column vs Column Scatter Plot")
+        if len(numeric_cols) >= 2:
+            col_s1, col_s2 = st.columns(2)
+            with col_s1:
+                x_col = st.selectbox("Select X axis:", numeric_cols, key="x_axis")
+            with col_s2:
+                y_col = st.selectbox("Select Y axis:", numeric_cols, index=1, key="y_axis")
+
+            scatter_df = pd.DataFrame({
+                x_col: pd.to_numeric(df[x_col], errors='coerce'),
+                y_col: pd.to_numeric(df[y_col], errors='coerce')
+            }).dropna()
+
+            fig5 = px.scatter(scatter_df, x=x_col, y=y_col,
+                              title=f"{x_col} vs {y_col}",
+                              trendline="ols",
+                              color_discrete_sequence=["#636EFA"])
+            st.plotly_chart(fig5, use_container_width=True)
         else:
-            st.success("No date columns found / all valid.")
+            st.info("Need at least 2 numeric columns for scatter plot.")
 
-    with v3:
-        st.markdown("**📱 Phone Validation**")
-        if not phone_df.empty:
-            st.dataframe(phone_df, use_container_width=True)
-        else:
-            st.success("No phone columns found / all valid.")
+    # ══════════════════════════════════════════════════════════════════════════
+    # TAB 5 — ACTIONS
+    # ══════════════════════════════════════════════════════════════════════════
+    with tab5:
 
-    with v4:
-        st.markdown("**⚠️ Consistency Check**")
-        if not consistency_df.empty:
-            st.dataframe(consistency_df, use_container_width=True)
-        else:
-            st.success("No consistency issues found.")
+        # Auto Clean
+        st.subheader("🧹 Auto Clean Dataset")
+        st.markdown("Fixes safe issues automatically. **Dangerous columns (ID, email, phone, date) are skipped and flagged.**")
 
-    # ── Correlation Heatmap ───────────────────────────────────────────────────
-    st.divider()
-    st.subheader("🔗 Correlation Heatmap")
-    st.markdown("Shows relationships between numeric columns. Values close to **1 or -1** = strong relationship.")
+        if st.button("✨ Clean My Dataset"):
+            cleaned_df, changes = auto_clean(df, type_info)
+            st.success("Dataset processed!")
 
-    corr = correlation_heatmap(df, type_info)
-    if corr is not None:
-        fig3 = px.imshow(corr, text_auto=True, color_continuous_scale="RdBu_r",
-                         zmin=-1, zmax=1, title="Correlation Matrix")
-        fig3.update_layout(width=700, height=500)
-        st.plotly_chart(fig3, use_container_width=True)
+            st.markdown("**Changes made:**")
+            for change in changes:
+                st.markdown(f"- {change}")
 
-        strong = []
-        cols   = corr.columns
-        for i in range(len(cols)):
-            for j in range(i + 1, len(cols)):
-                val = corr.iloc[i, j]
-                if abs(val) >= 0.5:
-                    direction = "positive 📈" if val > 0 else "negative 📉"
-                    strong.append(f"**{cols[i]}** and **{cols[j]}** → {val} ({direction})")
-        if strong:
-            st.markdown("**🔍 Strong Correlations Found:**")
-            for s in strong:
-                st.markdown(f"- {s}")
-        else:
-            st.markdown("No strong correlations found.")
-    else:
-        st.info("Need at least 2 numeric columns for correlation heatmap.")
+            new_type_info   = infer_column_types(cleaned_df)
+            new_null_df     = check_nulls(cleaned_df)
+            new_dup         = check_duplicates(cleaned_df)
+            new_outlier_df  = detect_outliers(cleaned_df, new_type_info)
+            new_email_df    = validate_emails(cleaned_df)
+            new_date_df     = validate_dates(cleaned_df, new_type_info)
+            new_phone_df    = validate_phones(cleaned_df)
+            new_consistency = check_consistency(cleaned_df)
+            new_score       = quality_score(cleaned_df, new_null_df, new_dup, new_outlier_df,
+                                            new_email_df, new_date_df, new_phone_df,
+                                            new_consistency, new_type_info)
 
-    # ── Distribution Plots ────────────────────────────────────────────────────
-    st.divider()
-    st.subheader("📊 Column Distribution Plots")
-    st.markdown("See how data is distributed across each numeric column.")
+            # Before vs After Chart
+            st.subheader("📊 Before vs After — Quality Improvement")
 
-    numeric_cols = distribution_plots(df, type_info)
-    if numeric_cols:
-        selected_col = st.selectbox("Select a column to explore:", numeric_cols)
-        plot_series  = type_info[selected_col]["coerced_numeric"]
-        fig4 = px.histogram(x=plot_series, nbins=30,
-                            title=f"Distribution of {selected_col}",
-                            color_discrete_sequence=["#636EFA"],
-                            marginal="box",
-                            labels={"x": selected_col})
-        fig4.update_layout(bargap=0.1)
-        st.plotly_chart(fig4, use_container_width=True)
+            avg_null_before  = null_df["Missing %"].mean()
+            dup_pct_before   = (duplicate_count / len(df)) * 100
+            out_pct_before   = min((outlier_df["Outlier Count"].sum() / len(df)) * 100, 100) if not outlier_df.empty else 0
+            mismatch_before  = sum(1 for col in df.columns if type_info[col]["actual"] in ["object","str"] and type_info[col]["inferred"] == "numeric")
 
-        col_x, col_y, col_z, col_w = st.columns(4)
-        with col_x:
-            st.metric("Mean", round(float(plot_series.mean()), 2))
-        with col_y:
-            st.metric("Median", round(float(plot_series.median()), 2))
-        with col_z:
-            st.metric("Std Dev", round(float(plot_series.std()), 2))
-        with col_w:
-            st.metric("Skewness", round(float(plot_series.skew()), 2))
-    else:
-        st.info("No numeric columns detected for distribution plots.")
+            avg_null_after   = new_null_df["Missing %"].mean()
+            dup_pct_after    = (new_dup / len(cleaned_df)) * 100 if len(cleaned_df) > 0 else 0
+            out_pct_after    = min((new_outlier_df["Outlier Count"].sum() / len(cleaned_df)) * 100, 100) if not new_outlier_df.empty and len(cleaned_df) > 0 else 0
+            mismatch_after   = sum(1 for col in cleaned_df.columns if new_type_info[col]["actual"] in ["object","str"] and new_type_info[col]["inferred"] == "numeric")
 
-    # ── Scatter Plot ──────────────────────────────────────────────────────────
-    st.divider()
-    st.subheader("🔵 Column vs Column Scatter Plot")
-    st.markdown("Pick any 2 numeric columns to see their relationship.")
+            comparison = pd.DataFrame({
+                "Dimension": ["Missing Values %", "Duplicate Rows %", "Outlier %", "Type Mismatches"],
+                "Before": [round(avg_null_before,1), round(dup_pct_before,1), round(out_pct_before,1), mismatch_before],
+                "After":  [round(avg_null_after,1),  round(dup_pct_after,1),  round(out_pct_after,1),  mismatch_after]
+            })
 
-    if len(numeric_cols) >= 2:
-        col_s1, col_s2 = st.columns(2)
-        with col_s1:
-            x_col = st.selectbox("Select X axis:", numeric_cols, key="x_axis")
-        with col_s2:
-            y_col = st.selectbox("Select Y axis:", numeric_cols, index=1, key="y_axis")
+            fig_ba = px.bar(
+                comparison, x="Dimension", y=["Before", "After"],
+                barmode="group",
+                title="Data Quality — Before vs After Cleaning",
+                color_discrete_map={"Before": "#ff4444", "After": "#00c853"},
+                text_auto=True
+            )
+            fig_ba.update_layout(
+                plot_bgcolor="#1e1e2e", paper_bgcolor="#1e1e2e",
+                font_color="#ffffff", yaxis_title="Value (lower is better)"
+            )
+            st.plotly_chart(fig_ba, use_container_width=True)
 
-        scatter_df = pd.DataFrame({
-            x_col: type_info[x_col]["coerced_numeric"],
-            y_col: type_info[y_col]["coerced_numeric"]
-        }).dropna()
+            delta = round(new_score - score, 1)
+            delta_color = "#00c853" if delta > 0 else "#ff4444"
 
-        fig5 = px.scatter(scatter_df, x=x_col, y=y_col,
-                          title=f"{x_col} vs {y_col}",
-                          trendline="ols",
-                          color_discrete_sequence=["#636EFA"])
-        st.plotly_chart(fig5, use_container_width=True)
-    else:
-        st.info("Need at least 2 numeric columns for scatter plot.")
+            components.html(f"""
+            <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+                        display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;">
+                <div style="background:#ff000022;border:1px solid #ff444466;
+                            border-radius:12px;padding:20px 28px;flex:1;min-width:150px;text-align:center;">
+                    <div style="font-size:0.8em;color:#ff8888;margin-bottom:4px;">BEFORE CLEANING</div>
+                    <div style="font-size:2.5em;font-weight:900;color:#ff4444;">{score}</div>
+                    <div style="font-size:0.75em;color:#888;">Quality Score / 100</div>
+                </div>
+                <div style="background:#2979ff22;border:1px solid #2979ff66;
+                            border-radius:12px;padding:20px 28px;flex:1;min-width:150px;text-align:center;">
+                    <div style="font-size:0.8em;color:#88aaff;margin-bottom:4px;">IMPROVEMENT</div>
+                    <div style="font-size:2.5em;font-weight:900;color:{delta_color};">+{delta}</div>
+                    <div style="font-size:0.75em;color:#888;">Points Gained</div>
+                </div>
+                <div style="background:#00c85322;border:1px solid #00c85366;
+                            border-radius:12px;padding:20px 28px;flex:1;min-width:150px;text-align:center;">
+                    <div style="font-size:0.8em;color:#88ffaa;margin-bottom:4px;">AFTER CLEANING</div>
+                    <div style="font-size:2.5em;font-weight:900;color:#00c853;">{new_score}</div>
+                    <div style="font-size:0.75em;color:#888;">Quality Score / 100</div>
+                </div>
+            </div>
+            """, height=130)
 
-    # ── Auto Clean ────────────────────────────────────────────────────────────
-    st.divider()
-    st.subheader("🧹 Auto Clean Dataset")
-    st.markdown("Automatically fix all detected issues — remove duplicates, fill nulls, drop bad columns.")
+            clean_csv = cleaned_df.to_csv(index=False)
+            st.download_button("📥 Download Cleaned Dataset",
+                               data=clean_csv,
+                               file_name="cleaned_dataset.csv",
+                               mime="text/csv")
 
-    if st.button("✨ Clean My Dataset"):
-        cleaned_df, changes = auto_clean(df, type_info)
-        st.success("Dataset cleaned successfully!")
+        st.divider()
 
-        st.markdown("**Changes made:**")
-        for change in changes:
-            st.markdown(f"- {change}")
+        # AI Code Generator
+        st.subheader("🤖 AI Cleaning Code Generator")
+        st.markdown("Generates **exact Python code** to clean your specific dataset — ready to copy and run.")
 
-        new_type_info   = infer_column_types(cleaned_df)
-        new_null_df     = check_nulls(cleaned_df)
-        new_dup         = check_duplicates(cleaned_df)
-        new_outlier_df  = detect_outliers(cleaned_df, new_type_info)
-        new_email_df    = validate_emails(cleaned_df)
-        new_date_df     = validate_dates(cleaned_df, new_type_info)
-        new_phone_df    = validate_phones(cleaned_df)
-        new_consistency = check_consistency(cleaned_df)
-        new_score       = quality_score(cleaned_df, new_null_df, new_dup, new_outlier_df,
-                                        new_email_df, new_date_df, new_phone_df,
-                                        new_consistency, new_type_info)
+        if st.button("⚡ Generate Cleaning Code"):
+            code = generate_cleaning_code(df, null_df, duplicate_count, outlier_df, type_info)
+            st.code(code, language="python")
+            st.download_button(
+                "📥 Download Cleaning Script",
+                data=code,
+                file_name="clean_dataset.py",
+                mime="text/plain"
+            )
+            st.success("✅ Copy the code above or download it as a .py file!")
 
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.metric("Old Quality Score", f"{score} / 100")
-        with col_b:
-            st.metric("New Quality Score", f"{new_score} / 100",
-                      delta=f"+{round(new_score - score, 1)}")
+        st.divider()
 
-        clean_csv = cleaned_df.to_csv(index=False)
-        st.download_button("📥 Download Cleaned Dataset",
-                           data=clean_csv,
-                           file_name="cleaned_dataset.csv",
+        # Download Report
+        st.subheader("📥 Download Quality Report")
+        report = null_df.copy()
+        report["Duplicate Rows"] = duplicate_count
+        report["Quality Score"]  = score
+        csv = report.to_csv(index=False)
+        st.download_button("📊 Download CSV Report",
+                           data=csv,
+                           file_name="quality_report.csv",
                            mime="text/csv")
 
-    st.divider()
-
-    # ── AI Code Generator ─────────────────────────────────────────────────────
-    st.subheader("🤖 AI Cleaning Code Generator")
-    st.markdown("Click below and AI will write the **exact Python code** to clean your specific dataset — ready to copy and run.")
-
-    if st.button("⚡ Generate Cleaning Code"):
-        code = generate_cleaning_code(df, null_df, duplicate_count, outlier_df, type_info)
-        st.code(code, language="python")
-        st.download_button(
-            "📥 Download Cleaning Script",
-            data=code,
-            file_name="clean_dataset.py",
-            mime="text/plain"
-        )
-        st.success("✅ Copy the code above or download it as a .py file!")
-
-    st.divider()
-
-    # ── Download Report ───────────────────────────────────────────────────────
-    st.subheader("📥 Download Report")
-    report = null_df.copy()
-    report["Duplicate Rows"] = duplicate_count
-    report["Quality Score"]  = score
-    csv = report.to_csv(index=False)
-    st.download_button("📊 Download CSV Report",
-                       data=csv,
-                       file_name="quality_report.csv",
-                       mime="text/csv")
-
 else:
-    st.info("👆 Upload a CSV file to get started!")
+    st.info("👆 Upload a CSV or Excel file to get started!")
